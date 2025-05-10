@@ -1,0 +1,20 @@
+{
+  "name": "monkeyscloud/monkeyslegion-dev-server",
+  "description": "Hot-reload development server for MonkeysLegion applications.",
+  "type": "library",
+  "license": "MIT",
+  "require": {
+    "php": "^8.4"
+  },
+  "autoload": {
+    "psr-4": {
+      "MonkeysLegion\\DevServer\\": "src/"
+    }
+  },
+  "bin": ["bin/dev-server"],
+  "extra": {
+    "branch-alias": {
+      "dev-main": "1.0-dev"
+    }
+  }
+}
