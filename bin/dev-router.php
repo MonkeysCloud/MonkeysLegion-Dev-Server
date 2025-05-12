@@ -1,15 +1,15 @@
 <?php
 declare(strict_types=1);
 
-// PHP‑cli server router:
-// - Serve actual files in public/
-// - Otherwise forward to index.php
+// Router script for PHP built‑in server:
+// - If the requested file exists under public/, serve it.
+// - Otherwise dispatch to public/index.php.
 
 $uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
-$publicFile = __DIR__ . '/../public' . $uri;
+$file = __DIR__ . '/../public' . $uri;
 
-if ($uri !== '/' && is_file($publicFile)) {
-    return false; // serve file
+if ($uri !== '/' && is_file($file)) {
+    return false; // serve the file directly
 }
 
 require __DIR__ . '/../public/index.php';
