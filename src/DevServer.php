@@ -29,13 +29,13 @@ final class DevServer
             exit(1);
         }
 
-        // Prefer the project's bin/dev-router.php if it exists
+        // Require the project's dev-router.php
         $router = $projectRoot
             . DIRECTORY_SEPARATOR . 'bin'
             . DIRECTORY_SEPARATOR . 'dev-router.php';
         if (! is_file($router)) {
-            // Fallback to package's dev-router
-            $router = __DIR__ . '/../../bin/dev-router.php';
+            fwrite(STDERR, "Error: bin/dev-router.php not found in project root.\n");
+            exit(1);
         }
 
         $command = sprintf(
