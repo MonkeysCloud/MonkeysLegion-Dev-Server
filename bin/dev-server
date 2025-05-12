@@ -2,19 +2,23 @@
 <?php
 declare(strict_types=1);
 
-// Autoload project
-$autoload = __DIR__ . '/../vendor/autoload.php';
-if (! file_exists($autoload)) {
-    fwrite(STDERR, "Error: vendor/autoload.php not found; run composer install first.\n");
-    exit(1);
+// 1) Locate Composer’s autoloader
+$dir = __DIR__;
+while (! is_file($dir . '/vendor/autoload.php')) {
+    $parent = dirname($dir);
+    if ($parent === $dir) {
+        fwrite(STDERR, "Error: vendor/autoload.php not found; run composer install\n");
+        exit(1);
+    }
+    $dir = $parent;
 }
-require $autoload;
+require $dir . '/vendor/autoload.php';
 
-// Invoke the DevServer
+// 2) Launch the DevServer
 $server = new MonkeysLegion\DevServer\DevServer();
 
-// Allow overriding via env vars or CLI args
-$host = $argv[1] ?? ($_SERVER['ML_DEV_HOST']  ?? '127.0.0.1');
-$port = isset($argv[2]) ? (int) $argv[2] : (int) ($_SERVER['ML_DEV_PORT'] ?? 8000);
+// Override host/port via CLI args or env
+$host = $argv[1] ?? ($_SERVER['ML_DEV_HOST'] ?? '127.0.0.1');
+$port = isset($argv[2]) ? (int)$argv[2] : (int)($_SERVER['ML_DEV_PORT'] ?? 8000);
 
 $server->serve($host, $port);
