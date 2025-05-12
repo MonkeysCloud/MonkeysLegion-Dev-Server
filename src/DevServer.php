@@ -14,7 +14,7 @@ final class DevServer
      *
      * @param string      $host    Host (default "127.0.0.1")
      * @param int         $port    Port (default 8000)
-     * @param string|null $docRoot Document root (default "<cwd>/public")
+     * @param string|null $docRoot Document root path or directory name (default "public")
      */
     public function serve(
         string $host = '127.0.0.1',
@@ -23,9 +23,18 @@ final class DevServer
     ): void {
         // Determine project root and document root
         $projectRoot = getcwd();
-        $docRoot     = $docRoot ?? $projectRoot . DIRECTORY_SEPARATOR . 'public';
-        if (! is_dir($docRoot)) {
-            fwrite(STDERR, "Public directory not found at {$docRoot}\n");
+
+        // Use provided docRoot if absolute or relative, otherwise default to <project>/public
+        if ($docRoot !== null) {
+            $docRootPath = is_dir($docRoot)
+                ? $docRoot
+                : $projectRoot . DIRECTORY_SEPARATOR . $docRoot;
+        } else {
+            $docRootPath = $projectRoot . DIRECTORY_SEPARATOR . 'public';
+        }
+
+        if (! is_dir($docRootPath)) {
+            fwrite(STDERR, "Public directory not found at {$docRootPath}\n");
             exit(1);
         }
 
@@ -37,27 +46,26 @@ final class DevServer
         if (is_file($projectRouter)) {
             $router = $projectRouter;
         } else {
-            // Fallback to vendor package's router
             $vendorRouter = $projectRoot
                 . DIRECTORY_SEPARATOR . 'vendor'
                 . DIRECTORY_SEPARATOR . 'monkeyscloud'
                 . DIRECTORY_SEPARATOR . 'monkeyslegion-dev-server'
                 . DIRECTORY_SEPARATOR . 'bin'
                 . DIRECTORY_SEPARATOR . 'dev-router.php';
-            if (is_file($vendorRouter)) {
-                $router = $vendorRouter;
-            } else {
+            if (! is_file($vendorRouter)) {
                 fwrite(STDERR, "Error: dev-router.php not found in project bin or vendor package.\n");
                 exit(1);
             }
+            $router = $vendorRouter;
         }
 
+        // Build and run built-in PHP server command
         $command = sprintf(
             '%s -S %s:%d -t %s %s',
-            escapeshellarg((string) PHP_BINARY),
+            escapeshellarg(PHP_BINARY),
             $host,
             $port,
-            escapeshellarg($docRoot),
+            escapeshellarg($docRootPath),
             escapeshellarg($router)
         );
 

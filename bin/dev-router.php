@@ -1,21 +1,17 @@
 <?php
 declare(strict_types=1);
 
-// Built‑in PHP server router for MonkeysLegion.
-// Always use the project’s public/ folder (cwd), never the package’s.
+// PHP built‑in server router for MonkeysLegion apps.
+// Always serve from the project’s public/ directory.
 
-$uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
-
-// Determine the project root from the current working directory
+$uri         = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 $projectRoot = getcwd();
+$file        = $projectRoot . '/public' . $uri;
 
-// Map the URI to the project’s public folder
-$file = $projectRoot . '/public' . $uri;
-
-// If it’s a real file (and not the root path), let PHP serve it directly
+// If the request matches a real file under public/, serve it directly
 if ($uri !== '/' && is_file($file)) {
     return false;
 }
 
-// Otherwise fall back to the project’s front controller
+// Otherwise fall back to the project's front controller
 require $projectRoot . '/public/index.php';
