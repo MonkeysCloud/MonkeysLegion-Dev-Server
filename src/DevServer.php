@@ -21,14 +21,22 @@ final class DevServer
         int $port = 8000,
         ?string $docRoot = null
     ): void {
-        $docRoot = $docRoot ?? getcwd() . DIRECTORY_SEPARATOR . 'public';
+        // Determine project root and document root
+        $projectRoot = getcwd();
+        $docRoot     = $docRoot ?? $projectRoot . DIRECTORY_SEPARATOR . 'public';
         if (! is_dir($docRoot)) {
             fwrite(STDERR, "Public directory not found at {$docRoot}\n");
             exit(1);
         }
 
-        // Build router script path
-        $router = __DIR__ . '/../../bin/dev-router.php';
+        // Prefer the project's bin/dev-router.php if it exists
+        $router = $projectRoot
+            . DIRECTORY_SEPARATOR . 'bin'
+            . DIRECTORY_SEPARATOR . 'dev-router.php';
+        if (! is_file($router)) {
+            // Fallback to package's dev-router
+            $router = __DIR__ . '/../../bin/dev-router.php';
+        }
 
         $command = sprintf(
             '%s -S %s:%d -t %s %s',
