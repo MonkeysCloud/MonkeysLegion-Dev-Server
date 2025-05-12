@@ -12,9 +12,9 @@ final class DevServer
     /**
      * Serve the application using PHP’s built‑in webserver.
      *
-     * @param string      $host    Host (default “127.0.0.1”)
+     * @param string      $host    Host (default "127.0.0.1")
      * @param int         $port    Port (default 8000)
-     * @param string|null $docRoot Document root (default “<cwd>/public”)
+     * @param string|null $docRoot Document root (default "<cwd>/public")
      */
     public function serve(
         string $host = '127.0.0.1',
@@ -29,13 +29,27 @@ final class DevServer
             exit(1);
         }
 
-        // Require the project's dev-router.php
-        $router = $projectRoot
+        // Determine router script: project or vendor fallback
+        $projectRouter = $projectRoot
             . DIRECTORY_SEPARATOR . 'bin'
             . DIRECTORY_SEPARATOR . 'dev-router.php';
-        if (! is_file($router)) {
-            fwrite(STDERR, "Error: bin/dev-router.php not found in project root.\n");
-            exit(1);
+
+        if (is_file($projectRouter)) {
+            $router = $projectRouter;
+        } else {
+            // Fallback to vendor package's router
+            $vendorRouter = $projectRoot
+                . DIRECTORY_SEPARATOR . 'vendor'
+                . DIRECTORY_SEPARATOR . 'monkeyscloud'
+                . DIRECTORY_SEPARATOR . 'monkeyslegion-dev-server'
+                . DIRECTORY_SEPARATOR . 'bin'
+                . DIRECTORY_SEPARATOR . 'dev-router.php';
+            if (is_file($vendorRouter)) {
+                $router = $vendorRouter;
+            } else {
+                fwrite(STDERR, "Error: dev-router.php not found in project bin or vendor package.\n");
+                exit(1);
+            }
         }
 
         $command = sprintf(
