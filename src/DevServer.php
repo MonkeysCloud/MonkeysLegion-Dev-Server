@@ -9,6 +9,8 @@ namespace MonkeysLegion\DevServer;
  */
 final class DevServer
 {
+    private const PID_FILE = __DIR__ . '/../../var/run/dev-server.pid';
+
     /**
      * Serve the application using PHP’s built‑in webserver.
      *
@@ -72,4 +74,23 @@ final class DevServer
         echo "🚀  Starting MonkeysLegion dev server at http://{$host}:{$port}\n";
         passthru($command);
     }
+
+    public static function stop(): void
+    {
+        if (! is_file(self::PID_FILE)) {
+            echo "⚠️  No running server found (no PID file)\n";
+            exit(1);
+        }
+
+        $pid = (int) file_get_contents(self::PID_FILE);
+        if ($pid > 0 && posix_kill($pid, SIGTERM)) {
+            @unlink(self::PID_FILE);
+            echo "🛑  Stopped dev server (PID {$pid})\n";
+            exit(0);
+        }
+
+        echo "❌  Failed to stop process {$pid}\n";
+        exit(1);
+    }
+
 }

@@ -14,11 +14,19 @@ while (! is_file($dir . '/vendor/autoload.php')) {
 }
 require $dir . '/vendor/autoload.php';
 
-// 2) Launch the DevServer
-$server = new MonkeysLegion\DevServer\DevServer();
+use MonkeysLegion\DevServer\DevServer;
 
-// Override host/port via CLI args or env
+// 2) Figure out command
+$cmd = $argv[1] ?? 'serve';
+if ($cmd === 'stop') {
+    DevServer::stop();
+    exit(0);
+}
+
+// 3) Serve
+// host/port come from argv[1]/argv[2] only when not “stop”
 $host = $argv[1] ?? ($_SERVER['ML_DEV_HOST'] ?? '127.0.0.1');
 $port = isset($argv[2]) ? (int)$argv[2] : (int)($_SERVER['ML_DEV_PORT'] ?? 8000);
 
+$server = new DevServer();
 $server->serve($host, $port);
