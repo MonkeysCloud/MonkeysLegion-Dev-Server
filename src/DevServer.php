@@ -5,14 +5,14 @@ declare(strict_types=1);
 namespace MonkeysLegion\DevServer;
 
 /**
- * Simple hot‑reload development server for MonkeysLegion apps.
+ * Simple hot-reload development server for MonkeysLegion apps.
  */
 final class DevServer
 {
     private const PID_FILE = __DIR__ . '/../../var/run/dev-server.pid';
 
     /**
-     * Serve the application using PHP’s built‑in webserver.
+     * Serve the application using PHP’s built-in webserver, in the background.
      *
      * @param string      $host    Host (default "127.0.0.1")
      * @param int         $port    Port (default 8000)
@@ -23,10 +23,9 @@ final class DevServer
         int $port = 8000,
         ?string $docRoot = null
     ): void {
-        // Determine project root and document root
         $projectRoot = getcwd();
 
-        // Use provided docRoot if absolute or relative, otherwise default to <project>/public
+        // figure out docRoot
         if ($docRoot !== null) {
             $docRootPath = is_dir($docRoot)
                 ? $docRoot
@@ -35,35 +34,31 @@ final class DevServer
             $docRootPath = $projectRoot . DIRECTORY_SEPARATOR . 'public';
         }
 
-        if (! is_dir($docRootPath)) {
+        if (!is_dir($docRootPath)) {
             fwrite(STDERR, "Public directory not found at {$docRootPath}\n");
             exit(1);
         }
 
-        // Determine router script: project or vendor fallback
-        $projectRouter = $projectRoot
-            . DIRECTORY_SEPARATOR . 'bin'
-            . DIRECTORY_SEPARATOR . 'dev-router.php';
-
+        // find router script
+        $projectRouter = $projectRoot . '/bin/dev-router.php';
         if (is_file($projectRouter)) {
             $router = $projectRouter;
         } else {
             $vendorRouter = $projectRoot
-                . DIRECTORY_SEPARATOR . 'vendor'
-                . DIRECTORY_SEPARATOR . 'monkeyscloud'
-                . DIRECTORY_SEPARATOR . 'monkeyslegion-dev-server'
-                . DIRECTORY_SEPARATOR . 'bin'
-                . DIRECTORY_SEPARATOR . 'dev-router.php';
-            if (! is_file($vendorRouter)) {
-                fwrite(STDERR, "Error: dev-router.php not found in project bin or vendor package.\n");
+                . '/vendor/monkeyscloud/monkeyslegion-dev-server/bin/dev-router.php';
+            if (!is_file($vendorRouter)) {
+                fwrite(STDERR, "Error: dev-router.php not found in bin/ or vendor package\n");
                 exit(1);
             }
             $router = $vendorRouter;
         }
 
-        // Build and run built-in PHP server command
-        $command = sprintf(
-            '%s -S %s:%d -t %s %s',
+        // ensure PID directory
+        @mkdir(dirname(self::PID_FILE), 0775, true);
+
+        // build background command
+        $cmd = sprintf(
+            '%s -S %s:%d -t %s %s > /dev/null 2>&1 & echo $!',
             escapeshellarg(PHP_BINARY),
             $host,
             $port,
@@ -71,13 +66,25 @@ final class DevServer
             escapeshellarg($router)
         );
 
-        echo "🚀  Starting MonkeysLegion dev server at http://{$host}:{$port}\n";
-        passthru($command);
+        // launch & capture pid
+        $pid = (int) shell_exec($cmd);
+        if ($pid <= 0) {
+            fwrite(STDERR, "❌  Failed to start server\n");
+            exit(1);
+        }
+
+        // write PID file
+        file_put_contents(self::PID_FILE, (string)$pid);
+
+        echo "🚀  Dev server running at http://{$host}:{$port} (PID {$pid})\n";
     }
 
+    /**
+     * Stop the running dev-server (via PID file + SIGTERM).
+     */
     public static function stop(): void
     {
-        if (! is_file(self::PID_FILE)) {
+        if (!is_file(self::PID_FILE)) {
             echo "⚠️  No running server found (no PID file)\n";
             exit(1);
         }
@@ -92,5 +99,4 @@ final class DevServer
         echo "❌  Failed to stop process {$pid}\n";
         exit(1);
     }
-
 }
