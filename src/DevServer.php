@@ -56,10 +56,13 @@ final class DevServer
         // ensure PID directory
         @mkdir(dirname(self::PID_FILE), 0775, true);
 
-        // build background command
+        // prepend “-d opcache.enable_cli=0” to PHP_BINARY
+        $php = PHP_BINARY . ' -d opcache.enable_cli=0';
+
         $cmd = sprintf(
+        // note we wrap the entire “php -d …” string in one single-quoted shell argument
             '%s -S %s:%d -t %s %s > /dev/null 2>&1 & echo $!',
-            escapeshellarg(PHP_BINARY),
+            escapeshellarg($php),
             $host,
             $port,
             escapeshellarg($docRootPath),
