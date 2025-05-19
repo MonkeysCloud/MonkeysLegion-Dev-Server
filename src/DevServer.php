@@ -60,8 +60,11 @@ final class DevServer
         $phpBinary = escapeshellarg(PHP_BINARY);
 
         $cmd = sprintf(
-        // note: -d goes immediately after the binary, before -S
-            '%s -d opcache.enable_cli=0 -S %s:%d -t %s %s > /dev/null 2>&1 & echo $!',
+            '%s '.
+            '-d opcache.enable=0 '.
+            '-d opcache.validate_timestamps=1 '.
+            '-d opcache.revalidate_freq=0 '.
+            '-S %s:%d -t %s %s > /dev/null 2>&1 & echo $!',
             $phpBinary,
             $host,
             $port,
