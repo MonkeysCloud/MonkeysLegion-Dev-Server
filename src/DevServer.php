@@ -57,12 +57,12 @@ final class DevServer
         @mkdir(dirname(self::PID_FILE), 0775, true);
 
         // prepend “-d opcache.enable_cli=0” to PHP_BINARY
-        $php = PHP_BINARY . ' -d opcache.enable_cli=0';
+        $phpBinary = escapeshellarg(PHP_BINARY);
 
         $cmd = sprintf(
-        // note we wrap the entire “php -d …” string in one single-quoted shell argument
-            '%s -S %s:%d -t %s %s > /dev/null 2>&1 & echo $!',
-            escapeshellarg($php),
+        // note: -d goes immediately after the binary, before -S
+            '%s -d opcache.enable_cli=0 -S %s:%d -t %s %s > /dev/null 2>&1 & echo $!',
+            $phpBinary,
             $host,
             $port,
             escapeshellarg($docRootPath),
