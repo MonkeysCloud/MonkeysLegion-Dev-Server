@@ -29,4 +29,22 @@ $host = $argv[1] ?? ($_SERVER['ML_DEV_HOST'] ?? '127.0.0.1');
 $port = isset($argv[2]) ? (int)$argv[2] : (int)($_SERVER['ML_DEV_PORT'] ?? 8000);
 
 $server = new DevServer();
-$server->serve($host, $port);
+ // 3) If `entr` is installed, use it to watch your app directories
+if ((bool) shell_exec('which entr')) {
+     echo "🔁  Hot-reload enabled via entr\n";
+ // watch PHP code, templates, public assets, config, etc.
+ $paths = implode(' ', [
+         'app/**/*.php',
+         'resources/views/**/*.ml.php',
+         'public/**/*.*',
+         'config/*.php',
+     ]);
+ // `-r` restarts the server command on any file change
+ passthru(
+         "find app public resources config -type f | entr -r " .
+         escapeshellcmd("php -S {$host}:{$port} -t public dev-router.php")
+     );
+} else {
+     echo "⚠️  `entr` not found, running without hot-reload\n";
+ $server->serve($host, $port);
+}
