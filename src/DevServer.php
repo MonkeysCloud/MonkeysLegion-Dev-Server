@@ -21,11 +21,13 @@ final class DevServer
      * @param string      $host    Host (default "127.0.0.1")
      * @param int         $port    Port (default 8000)
      * @param string|null $docRoot Document root path or directory name (default "public")
+     * @param bool        $watch   Enable file watching with pure PHP watcher (default: false)
      */
     public function serve(
         string $host = '127.0.0.1',
         int $port = 8000,
-        ?string $docRoot = null
+        ?string $docRoot = null,
+        bool $watch = false
     ): void {
         $projectRoot = getcwd();
 
@@ -55,6 +57,12 @@ final class DevServer
                 exit(1);
             }
             $router = $vendorRouter;
+        }
+
+        // If watch mode, use FileWatcher
+        if ($watch) {
+            $this->serveWithFileWatcher($host, $port, $docRootPath, $router);
+            return;
         }
 
         // ensure PID directory
@@ -90,6 +98,110 @@ final class DevServer
         file_put_contents($pidFile, (string)$pid);
 
         echo "🚀  Dev server running at http://{$host}:{$port} (PID {$pid})\n";
+    }
+
+    /**
+     * Serve with pure PHP file watcher (no entr required).
+     */
+    private function serveWithFileWatcher(
+        string $host,
+        int $port,
+        string $docRoot,
+        string $router
+    ): void {
+        $projectRoot = getcwd();
+
+        // Directories to watch
+        $watchPaths = [
+            $projectRoot . '/app',
+            $projectRoot . '/config',
+            $projectRoot . '/resources',
+            $projectRoot . '/public',
+        ];
+
+        // Filter to existing directories
+        $watchPaths = array_filter($watchPaths, 'is_dir');
+
+        if (empty($watchPaths)) {
+            echo "⚠️  No directories found to watch\n";
+            // Fall back to basic serve without watching
+            $this->serve($host, $port, basename($docRoot), false);
+            return;
+        }
+
+        echo "🔁  Hot-reload enabled via FileWatcher\n";
+
+        // Create watcher
+        $watcher = new FileWatcher(
+            $watchPaths,
+            ['php', 'ml.php', 'css', 'js', 'html', 'json'],
+            1 // Check every second
+        );
+
+        // Start watching and restart server on changes
+        $watcher->watch(function() use ($host, $port, $docRoot, $router) {
+            // Stop current server
+            $this->stopServer();
+
+            // Wait a moment
+            sleep(1);
+
+            // Restart
+            $this->startServer($host, $port, $docRoot, $router);
+        });
+    }
+
+    /**
+     * Start the PHP built-in server.
+     */
+    private function startServer(string $host, int $port, string $docRoot, string $router): void
+    {
+        $pidFile = self::getPidFile();
+        @mkdir(dirname($pidFile), 0775, true);
+
+        $phpBinary = escapeshellarg(PHP_BINARY);
+
+        $cmd = sprintf(
+            '%s '.
+            '-d opcache.enable_cli=0 '.
+            '-d opcache.enable=0 '.
+            '-d opcache.validate_timestamps=1 '.
+            '-d opcache.revalidate_freq=0 '.
+            '-d realpath_cache_ttl=0 '.
+            '-S %s:%d -t %s %s > /dev/null 2>&1 & echo $!',
+            $phpBinary,
+            $host,
+            $port,
+            escapeshellarg($docRoot),
+            escapeshellarg($router)
+        );
+
+        $pid = (int) shell_exec($cmd);
+        if ($pid > 0) {
+            file_put_contents($pidFile, (string)$pid);
+            echo "🚀  Server started at http://{$host}:{$port} (PID {$pid})\n";
+        }
+    }
+
+    /**
+     * Stop the server (for FileWatcher restarts).
+     */
+    private function stopServer(): void
+    {
+        $pidFile = self::getPidFile();
+
+        if (!is_file($pidFile)) {
+            return;
+        }
+
+        $pid = (int) file_get_contents($pidFile);
+
+        if ($pid > 0 && function_exists('posix_kill')) {
+            @posix_kill($pid, SIGTERM);
+            @posix_kill(-$pid, SIGTERM);
+        }
+
+        @unlink($pidFile);
     }
 
     /**

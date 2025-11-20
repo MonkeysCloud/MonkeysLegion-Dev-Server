@@ -81,9 +81,15 @@ if (is_file($projectRouter)) {
     $router = $vendorRouter;
 }
 
-// 4) If `entr` is installed, use it to watch your app directories
-if ((bool) shell_exec('which entr')) {
-    echo "🔁  Hot-reload enabled via entr\n";
+// 4) Check for file watching options in order of preference:
+//    1. entr (most efficient, external tool)
+//    2. Pure PHP FileWatcher (built-in, no external dependencies)
+
+$hasEntr = (bool) shell_exec('which entr 2>/dev/null');
+
+if ($hasEntr) {
+    // Option 1: Use entr for efficient file watching
+    echo "🔁  Hot-reload enabled via entr (recommended)\n";
 
     // PHP command with opcache disabled for hot-reload
     $phpCmd = sprintf(
@@ -98,10 +104,14 @@ if ((bool) shell_exec('which entr')) {
     // `-r` restarts the server command on any file change
     echo "🌐  Server will auto-restart on file changes\n";
     echo "🚀  Starting server at http://{$host}:{$port}\n";
+    echo "💡  Watching: app, public, resources, config\n";
     passthru("find app public resources config -type f 2>/dev/null | entr -r {$phpCmd}");
+
 } else {
-    echo "⚠️  `entr` not found, running without hot-reload\n";
-    echo "💡  Install entr for automatic restart: sudo apt-get install entr (Linux) or brew install entr (macOS)\n";
+    // Option 2: Use pure PHP FileWatcher as fallback
+    echo "💡  entr not found, using built-in FileWatcher\n";
+    echo "💡  For better performance, install entr: sudo apt-get install entr (Linux) or brew install entr (macOS)\n";
+
     $server = new DevServer();
-    $server->serve($host, $port);
+    $server->serve($host, $port, null, true); // true = enable FileWatcher
 }
