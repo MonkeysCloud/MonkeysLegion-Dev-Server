@@ -2,7 +2,7 @@
 <?php
 declare(strict_types=1);
 
-// 1) Locate Composer’s autoloader
+// 1) Locate Composer's autoloader
 $dir = __DIR__;
 while (! is_file($dir . '/vendor/autoload.php')) {
     $parent = dirname($dir);
@@ -18,33 +18,90 @@ use MonkeysLegion\DevServer\DevServer;
 
 // 2) Figure out command
 $cmd = $argv[1] ?? 'serve';
-if ($cmd === 'stop') {
-    DevServer::stop();
-    exit(0);
+
+// Handle different commands
+switch ($cmd) {
+    case 'stop':
+        DevServer::stop();
+        exit(0);
+
+    case 'restart':
+        $host = $argv[2] ?? ($_SERVER['ML_DEV_HOST'] ?? '127.0.0.1');
+        $port = isset($argv[3]) ? (int)$argv[3] : (int)($_SERVER['ML_DEV_PORT'] ?? 8000);
+        DevServer::restart($host, $port);
+        exit(0);
+
+    case 'status':
+        DevServer::status();
+        exit(0);
+
+    case 'serve':
+    case 'start':
+        // Continue to serve logic below
+        break;
+
+    default:
+        echo "Usage: dev-server [command] [host] [port]\n";
+        echo "\n";
+        echo "Commands:\n";
+        echo "  serve, start  Start the dev server (default)\n";
+        echo "  stop          Stop the dev server\n";
+        echo "  restart       Restart the dev server\n";
+        echo "  status        Check if dev server is running\n";
+        echo "\n";
+        echo "Examples:\n";
+        echo "  dev-server                    # Start on 127.0.0.1:8000\n";
+        echo "  dev-server 0.0.0.0 3000       # Start on 0.0.0.0:3000\n";
+        echo "  dev-server stop               # Stop the server\n";
+        echo "  dev-server restart            # Restart the server\n";
+        echo "  dev-server status             # Check status\n";
+        exit(1);
 }
 
-// 3) Serve
-// host/port come from argv[1]/argv[2] only when not “stop”
-$host = $argv[1] ?? ($_SERVER['ML_DEV_HOST'] ?? '127.0.0.1');
-$port = isset($argv[2]) ? (int)$argv[2] : (int)($_SERVER['ML_DEV_PORT'] ?? 8000);
-
-$server = new DevServer();
- // 3) If `entr` is installed, use it to watch your app directories
-if ((bool) shell_exec('which entr')) {
-     echo "🔁  Hot-reload enabled via entr\n";
- // watch PHP code, templates, public assets, config, etc.
- $paths = implode(' ', [
-         'app/**/*.php',
-         'resources/views/**/*.ml.php',
-         'public/**/*.*',
-         'config/*.php',
-     ]);
- // `-r` restarts the server command on any file change
- passthru(
-         "find app public resources config -type f | entr -r " .
-         escapeshellcmd("php -S {$host}:{$port} -t public dev-router.php")
-     );
+// 3) Parse host/port for serve command
+if ($cmd === 'serve' || $cmd === 'start') {
+    $host = $argv[2] ?? ($_SERVER['ML_DEV_HOST'] ?? '127.0.0.1');
+    $port = isset($argv[3]) ? (int)$argv[3] : (int)($_SERVER['ML_DEV_PORT'] ?? 8000);
 } else {
-     echo "⚠️  `entr` not found, running without hot-reload\n";
- $server->serve($host, $port);
+    $host = $argv[1] ?? ($_SERVER['ML_DEV_HOST'] ?? '127.0.0.1');
+    $port = isset($argv[2]) ? (int)$argv[2] : (int)($_SERVER['ML_DEV_PORT'] ?? 8000);
+}
+
+// Find router script
+$projectRoot = getcwd();
+$projectRouter = $projectRoot . '/bin/dev-router.php';
+if (is_file($projectRouter)) {
+    $router = $projectRouter;
+} else {
+    $vendorRouter = $projectRoot . '/vendor/monkeyscloud/monkeyslegion-dev-server/bin/dev-router.php';
+    if (!is_file($vendorRouter)) {
+        fwrite(STDERR, "Error: dev-router.php not found in bin/ or vendor package\n");
+        exit(1);
+    }
+    $router = $vendorRouter;
+}
+
+// 4) If `entr` is installed, use it to watch your app directories
+if ((bool) shell_exec('which entr')) {
+    echo "🔁  Hot-reload enabled via entr\n";
+
+    // PHP command with opcache disabled for hot-reload
+    $phpCmd = sprintf(
+            "%s -d opcache.enable_cli=0 -d opcache.enable=0 -d opcache.validate_timestamps=1 -d opcache.revalidate_freq=0 -d realpath_cache_ttl=0 -S %s:%d -t public %s",
+            escapeshellarg(PHP_BINARY),
+            $host,
+            $port,
+            escapeshellarg($router)
+    );
+
+    // Watch PHP code, templates, public assets, config, etc.
+    // `-r` restarts the server command on any file change
+    echo "🌐  Server will auto-restart on file changes\n";
+    echo "🚀  Starting server at http://{$host}:{$port}\n";
+    passthru("find app public resources config -type f 2>/dev/null | entr -r {$phpCmd}");
+} else {
+    echo "⚠️  `entr` not found, running without hot-reload\n";
+    echo "💡  Install entr for automatic restart: sudo apt-get install entr (Linux) or brew install entr (macOS)\n";
+    $server = new DevServer();
+    $server->serve($host, $port);
 }
