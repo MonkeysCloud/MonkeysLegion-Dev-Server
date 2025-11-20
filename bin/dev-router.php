@@ -7,9 +7,22 @@ declare(strict_types=1);
 
 $uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 
-// Compute project root based on this script’s location:
-// vendor/monkeyscloud/monkeyslegion-dev-server/bin/dev-router.php
 $projectRoot = dirname(__DIR__, 4);
+
+// 🔁 Dev reload endpoint
+if ($uri === '/_dev/reload.json') {
+    $marker = $projectRoot . '/var/cache/dev-reload.json';
+
+    header('Content-Type: application/json');
+
+    if (!file_exists($marker)) {
+        echo json_encode(['version' => 0]);
+        return true;
+    }
+
+    readfile($marker);
+    return true;
+}
 
 // Map URI to project’s public folder
 $file = $projectRoot . '/public' . $uri;

@@ -143,6 +143,9 @@ final class DevServer
 
         // Start watching and restart server on changes
         $watcher->watch(function() use ($host, $port, $docRoot, $router) {
+            // Mark change for the browser
+            $this->touchReloadMarker();
+
             // Stop current server
             $this->stopServer();
 
@@ -325,5 +328,24 @@ final class DevServer
             echo "❌  Dev server is not running (stale PID file)\n";
             @unlink($pidFile);
         }
+    }
+
+    /**
+     * Touch the reload marker file to signal reload.
+     */
+    private function touchReloadMarker(): void
+    {
+        $projectRoot = getcwd();
+        $marker = $projectRoot . '/var/cache/dev-reload.json';
+
+        if (!is_dir(dirname($marker))) {
+            @mkdir(dirname($marker), 0777, true);
+        }
+
+        $payload = [
+            'version' => microtime(true),
+        ];
+
+        @file_put_contents($marker, json_encode($payload));
     }
 }
