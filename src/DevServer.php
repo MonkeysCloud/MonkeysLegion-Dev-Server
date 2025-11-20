@@ -131,6 +131,9 @@ final class DevServer
 
         echo "🔁  Hot-reload enabled via FileWatcher\n";
 
+        // START THE SERVER FIRST!
+        $this->startServer($host, $port, $docRoot, $router);
+
         // Create watcher
         $watcher = new FileWatcher(
             $watchPaths,
