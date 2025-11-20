@@ -3,360 +3,143 @@
 
 declare(strict_types=1);
 
-namespace MonkeysLegion\DevServer;
-
 /**
- * Simple hot-reload development server for MonkeysLegion apps.
+ * MonkeysLegion Dev Server CLI
+ *
+ * Usage:
+ *   ./dev-server serve [--host=127.0.0.1] [--port=8000] [--watch]
+ *   ./dev-server stop
+ *   ./dev-server restart
+ *   ./dev-server status
  */
-final class DevServer
-{
-    private static function getPidFile(): string
-    {
-        $projectRoot = getcwd();
-        return $projectRoot . '/var/run/dev-server.pid';
+
+// Find project root and autoloader
+$autoloadPaths = [
+    __DIR__ . '/vendor/autoload.php',
+    __DIR__ . '/../vendor/autoload.php',
+    __DIR__ . '/../../vendor/autoload.php',
+    __DIR__ . '/../../../autoload.php',
+];
+
+$autoloaded = false;
+foreach ($autoloadPaths as $path) {
+    if (file_exists($path)) {
+        require $path;
+        $autoloaded = true;
+        break;
     }
+}
 
-    /**
-     * Serve the application using PHP's built-in webserver, in the background.
-     *
-     * @param string      $host    Host (default "127.0.0.1")
-     * @param int         $port    Port (default 8000)
-     * @param string|null $docRoot Document root path or directory name (default "public")
-     * @param bool        $watch   Enable file watching with pure PHP watcher (default: false)
-     */
-    public function serve(
-            string $host = '127.0.0.1',
-            int $port = 8000,
-            ?string $docRoot = null,
-            bool $watch = false
-    ): void {
-        $projectRoot = getcwd();
+if (!$autoloaded) {
+    fwrite(STDERR, "Error: Could not find vendor/autoload.php\n");
+    fwrite(STDERR, "Please run: composer install\n");
+    exit(1);
+}
 
-        // figure out docRoot
-        if ($docRoot !== null) {
-            $docRootPath = is_dir($docRoot)
-                    ? $docRoot
-                    : $projectRoot . DIRECTORY_SEPARATOR . $docRoot;
+use MonkeysLegion\DevServer\DevServer;
+
+// Parse command line arguments
+$command = $argv[1] ?? 'serve';
+$options = [];
+
+// Parse options
+for ($i = 2; $i < count($argv); $i++) {
+    $arg = $argv[$i];
+
+    if (strpos($arg, '--') === 0) {
+        $arg = substr($arg, 2);
+        if (strpos($arg, '=') !== false) {
+            [$key, $value] = explode('=', $arg, 2);
+            $options[$key] = $value;
         } else {
-            $docRootPath = $projectRoot . DIRECTORY_SEPARATOR . 'public';
-        }
-
-        if (!is_dir($docRootPath)) {
-            fwrite(STDERR, "Public directory not found at {$docRootPath}\n");
-            exit(1);
-        }
-
-        // find router script
-        $projectRouter = $projectRoot . '/bin/dev-router.php';
-        if (is_file($projectRouter)) {
-            $router = $projectRouter;
-        } else {
-            $vendorRouter = $projectRoot
-                    . '/vendor/monkeyscloud/monkeyslegion-dev-server/bin/dev-router.php';
-            if (!is_file($vendorRouter)) {
-                fwrite(STDERR, "Error: dev-router.php not found in bin/ or vendor package\n");
-                exit(1);
-            }
-            $router = $vendorRouter;
-        }
-
-        // If watch mode, use FileWatcher
-        if ($watch) {
-            $this->serveWithFileWatcher($host, $port, $docRootPath, $router);
-            return;
-        }
-
-        // ensure PID directory
-        $pidFile = self::getPidFile();
-        @mkdir(dirname($pidFile), 0775, true);
-
-        // disable opcache for CLI to enable hot-reload
-        $phpBinary = escapeshellarg(PHP_BINARY);
-
-        $cmd = sprintf(
-                '%s '.
-                '-d opcache.enable_cli=0 '.
-                '-d opcache.enable=0 '.
-                '-d opcache.validate_timestamps=1 '.
-                '-d opcache.revalidate_freq=0 '.
-                '-d realpath_cache_ttl=0 '.
-                '-S %s:%d -t %s %s > /dev/null 2>&1 & echo $!',
-                $phpBinary,
-                $host,
-                $port,
-                escapeshellarg($docRootPath),
-                escapeshellarg($router)
-        );
-
-        // launch & capture pid
-        $pid = (int) shell_exec($cmd);
-        if ($pid <= 0) {
-            fwrite(STDERR, "❌  Failed to start server\n");
-            exit(1);
-        }
-
-        // write PID file
-        file_put_contents($pidFile, (string)$pid);
-
-        echo "🚀  Dev server running at http://{$host}:{$port} (PID {$pid})\n";
-    }
-
-    /**
-     * Serve with pure PHP file watcher (no entr required).
-     */
-    private function serveWithFileWatcher(
-            string $host,
-            int $port,
-            string $docRoot,
-            string $router
-    ): void {
-        $projectRoot = getcwd();
-
-        // Directories to watch
-        $watchPaths = [
-                $projectRoot . '/app',
-                $projectRoot . '/config',
-                $projectRoot . '/resources',
-                $projectRoot . '/public',
-        ];
-
-        // Filter to existing directories
-        $watchPaths = array_filter($watchPaths, 'is_dir');
-
-        if (empty($watchPaths)) {
-            echo "⚠️  No directories found to watch\n";
-            // Fall back to basic serve without watching
-            $this->serve($host, $port, basename($docRoot), false);
-            return;
-        }
-
-        echo "🔁  Hot-reload enabled via FileWatcher\n";
-
-        // START THE SERVER FIRST!
-        $this->startServer($host, $port, $docRoot, $router);
-
-        // Create watcher
-        $watcher = new FileWatcher(
-                $watchPaths,
-                ['php', 'ml.php', 'css', 'js', 'html', 'json'],
-                1 // Check every second
-        );
-
-        // Start watching and restart server on changes
-        $watcher->watch(function() use ($host, $port, $docRoot, $router) {
-            // Mark change for the browser
-            $this->touchReloadMarker();
-
-            // Stop current server
-            $this->stopServer();
-
-            // Wait a moment
-            sleep(1);
-
-            // Restart
-            $this->startServer($host, $port, $docRoot, $router);
-        });
-    }
-
-    /**
-     * Start the PHP built-in server.
-     */
-    private function startServer(string $host, int $port, string $docRoot, string $router): void
-    {
-        $pidFile = self::getPidFile();
-        @mkdir(dirname($pidFile), 0775, true);
-
-        $phpBinary = escapeshellarg(PHP_BINARY);
-
-        $cmd = sprintf(
-                '%s '.
-                '-d opcache.enable_cli=0 '.
-                '-d opcache.enable=0 '.
-                '-d opcache.validate_timestamps=1 '.
-                '-d opcache.revalidate_freq=0 '.
-                '-d realpath_cache_ttl=0 '.
-                '-S %s:%d -t %s %s > /dev/null 2>&1 & echo $!',
-                $phpBinary,
-                $host,
-                $port,
-                escapeshellarg($docRoot),
-                escapeshellarg($router)
-        );
-
-        $pid = (int) shell_exec($cmd);
-        if ($pid > 0) {
-            file_put_contents($pidFile, (string)$pid);
-            echo "🚀  Server started at http://{$host}:{$port} (PID {$pid})\n";
-        }
-    }
-
-    /**
-     * Stop the server (for FileWatcher restarts).
-     */
-    private function stopServer(): void
-    {
-        $pidFile = self::getPidFile();
-
-        if (!is_file($pidFile)) {
-            return;
-        }
-
-        $pid = (int) file_get_contents($pidFile);
-
-        if ($pid > 0 && function_exists('posix_kill')) {
-            @posix_kill($pid, SIGTERM);
-            @posix_kill(-$pid, SIGTERM);
-        }
-
-        @unlink($pidFile);
-    }
-
-    /**
-     * Stop the running dev-server (via PID file + SIGTERM).
-     */
-    public static function stop(): void
-    {
-        $pidFile = self::getPidFile();
-
-        if (!is_file($pidFile)) {
-            echo "⚠️  No running server found (no PID file)\n";
-
-            // Try to kill by port anyway
-            self::killByPort();
-            exit(1);
-        }
-
-        $pid = (int) file_get_contents($pidFile);
-
-        if ($pid <= 0) {
-            echo "⚠️  Invalid PID in file\n";
-            @unlink($pidFile);
-            self::killByPort();
-            exit(1);
-        }
-
-        // Kill the process group (handles child processes)
-        $killed = false;
-
-        // Try to kill the process group first (negative PID)
-        if (function_exists('posix_kill')) {
-            // Kill entire process group
-            @posix_kill(-$pid, SIGTERM);
-            // Also kill the main process
-            $killed = @posix_kill($pid, SIGTERM);
-
-            if (!$killed) {
-                // Try SIGKILL if SIGTERM didn't work
-                sleep(1);
-                $killed = @posix_kill($pid, SIGKILL);
-                @posix_kill(-$pid, SIGKILL);
-            }
-        } else {
-            // Fallback for systems without posix_kill
-            exec("kill -TERM {$pid} 2>/dev/null", $output, $result);
-            $killed = ($result === 0);
-        }
-
-        @unlink($pidFile);
-
-        if ($killed) {
-            echo "🛑  Stopped dev server (PID {$pid})\n";
-        } else {
-            echo "⚠️  Process {$pid} may have already stopped\n";
-            self::killByPort();
-        }
-    }
-
-    /**
-     * Restart the dev server.
-     */
-    public static function restart(string $host = '127.0.0.1', int $port = 8000): void
-    {
-        echo "🔄  Restarting dev server...\n";
-        self::stop();
-        sleep(1); // Give it a moment to clean up
-
-        $server = new self();
-        $server->serve($host, $port);
-    }
-
-    /**
-     * Fallback: kill PHP processes listening on common dev ports.
-     */
-    private static function killByPort(int $port = 8000): void
-    {
-        // Try to find and kill PHP processes on the port
-        $cmd = "lsof -ti:$port 2>/dev/null | xargs kill -9 2>/dev/null";
-        @exec($cmd);
-
-        // Alternative: pkill approach
-        $cmd2 = "pkill -f 'php.*-S.*:$port' 2>/dev/null";
-        @exec($cmd2);
-    }
-
-    /**
-     * Get the status of the dev server.
-     */
-    public static function status(): void
-    {
-        $pidFile = self::getPidFile();
-
-        if (!is_file($pidFile)) {
-            echo "❌  Dev server is not running (no PID file)\n";
-            return;
-        }
-
-        $pid = (int) file_get_contents($pidFile);
-
-        // Check if process is actually running
-        if (function_exists('posix_kill')) {
-            $running = @posix_kill($pid, 0); // Signal 0 just checks if process exists
-        } else {
-            exec("ps -p {$pid} 2>/dev/null", $output, $result);
-            $running = ($result === 0 && count($output) > 1);
-        }
-
-        if ($running) {
-            echo "✅  Dev server is running (PID {$pid})\n";
-
-            // Try to get the URL
-            exec("lsof -nP -iTCP -sTCP:LISTEN -p {$pid} 2>/dev/null | grep -oE ':[0-9]+'", $ports);
-            if (!empty($ports[0])) {
-                $port = trim($ports[0], ':');
-                echo "🌐  Listening on: http://127.0.0.1:{$port}\n";
-            }
-        } else {
-            echo "❌  Dev server is not running (stale PID file)\n";
-            @unlink($pidFile);
-        }
-    }
-
-    /**
-     * Touch the reload marker file to signal reload.
-     */
-    private function touchReloadMarker(): void
-    {
-        $projectRoot = getcwd();
-        $cacheDir = $projectRoot . '/var/cache';
-        $marker = $cacheDir . '/dev-reload.json';
-
-        if (!is_dir($cacheDir)) {
-            @mkdir($cacheDir, 0777, true);
-        }
-
-        // Use microtime as version - ensures it's always different
-        $payload = [
-                'version' => microtime(true),
-                'timestamp' => date('Y-m-d H:i:s'),
-        ];
-
-        // Atomic write: write to temp file, then rename
-        $temp = $marker . '.tmp';
-        if (@file_put_contents($temp, json_encode($payload)) !== false) {
-            @rename($temp, $marker);
-            echo "Reload marker updated (v{$payload['version']})\n";
-        } else {
-            echo "Failed to write reload marker\n";
+            $options[$arg] = true;
         }
     }
 }
+
+// Extract common options
+$host = $options['host'] ?? '127.0.0.1';
+$port = isset($options['port']) ? (int)$options['port'] : 8000;
+$watch = isset($options['watch']) || isset($options['w']);
+$docRoot = $options['docroot'] ?? $options['doc-root'] ?? null;
+
+// Execute command
+switch ($command) {
+    case 'serve':
+    case 'start':
+        $server = new DevServer();
+        $server->serve($host, $port, $docRoot, $watch);
+        break;
+
+    case 'stop':
+        DevServer::stop();
+        break;
+
+    case 'restart':
+        DevServer::restart($host, $port);
+        break;
+
+    case 'status':
+        DevServer::status();
+        break;
+
+    case 'help':
+    case '--help':
+    case '-h':
+        showHelp();
+        break;
+
+    default:
+        fwrite(STDERR, "Unknown command: {$command}\n\n");
+        showHelp();
+        exit(1);
+}
+
+function showHelp(): void
+{
+    echo <<<'HELP'
+MonkeysLegion Dev Server - Hot-reload development server
+
+USAGE:
+    ./dev-server <command> [options]
+
+COMMANDS:
+    serve           Start the development server (default)
+    stop            Stop the running server
+    restart         Restart the server
+    status          Show server status
+    help            Show this help message
+
+OPTIONS:
+    --host=HOST     Server host (default: 127.0.0.1)
+    --port=PORT     Server port (default: 8000)
+    --watch, -w     Enable hot-reload file watching
+    --docroot=PATH  Document root path (default: public)
+
+EXAMPLES:
+    # Start server with hot-reload
+    ./dev-server serve --watch
+
+    # Start on custom port
+    ./dev-server serve --port=3000
+
+    # Start with custom host and port
+    ./dev-server serve --host=0.0.0.0 --port=8080 --watch
+
+    # Check server status
+    ./dev-server status
+
+    # Stop the server
+    ./dev-server stop
+
+    # Restart the server
+    ./dev-server restart
+
+NOTES:
+    - Hot-reload requires the dev-reload.js script in your public/js/ directory
+    - Make sure APP_ENV=development is set in your .env file
+    - The server runs in the background; use 'stop' to terminate it
+
+HELP;
+}
+

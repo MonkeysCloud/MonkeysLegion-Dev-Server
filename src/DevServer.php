@@ -336,16 +336,26 @@ final class DevServer
     private function touchReloadMarker(): void
     {
         $projectRoot = getcwd();
-        $marker = $projectRoot . '/var/cache/dev-reload.json';
+        $cacheDir = $projectRoot . '/var/cache';
+        $marker = $cacheDir . '/dev-reload.json';
 
-        if (!is_dir(dirname($marker))) {
-            @mkdir(dirname($marker), 0777, true);
+        if (!is_dir($cacheDir)) {
+            @mkdir($cacheDir, 0777, true);
         }
 
+        // Use microtime as version - ensures it's always different
         $payload = [
             'version' => microtime(true),
+            'timestamp' => date('Y-m-d H:i:s'),
         ];
 
-        @file_put_contents($marker, json_encode($payload));
+        // Atomic write: write to temp file, then rename
+        $temp = $marker . '.tmp';
+        if (@file_put_contents($temp, json_encode($payload)) !== false) {
+            @rename($temp, $marker);
+            echo "Reload marker updated (v{$payload['version']})\n";
+        } else {
+            echo "Failed to write reload marker\n";
+        }
     }
 }
