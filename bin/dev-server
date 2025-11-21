@@ -1,145 +1,117 @@
 #!/usr/bin/env php
 <?php
-
 declare(strict_types=1);
 
-/**
- * MonkeysLegion Dev Server CLI
- *
- * Usage:
- *   ./dev-server serve [--host=127.0.0.1] [--port=8000] [--watch]
- *   ./dev-server stop
- *   ./dev-server restart
- *   ./dev-server status
- */
-
-// Find project root and autoloader
-$autoloadPaths = [
-    __DIR__ . '/vendor/autoload.php',
-    __DIR__ . '/../vendor/autoload.php',
-    __DIR__ . '/../../vendor/autoload.php',
-    __DIR__ . '/../../../autoload.php',
-];
-
-$autoloaded = false;
-foreach ($autoloadPaths as $path) {
-    if (file_exists($path)) {
-        require $path;
-        $autoloaded = true;
-        break;
+// 1) Locate Composer's autoloader
+$dir = __DIR__;
+while (! is_file($dir . '/vendor/autoload.php')) {
+    $parent = dirname($dir);
+    if ($parent === $dir) {
+        fwrite(STDERR, "Error: vendor/autoload.php not found; run composer install\n");
+        exit(1);
     }
+    $dir = $parent;
 }
-
-if (!$autoloaded) {
-    fwrite(STDERR, "Error: Could not find vendor/autoload.php\n");
-    fwrite(STDERR, "Please run: composer install\n");
-    exit(1);
-}
+require $dir . '/vendor/autoload.php';
 
 use MonkeysLegion\DevServer\DevServer;
 
-// Parse command line arguments
-$command = $argv[1] ?? 'serve';
-$options = [];
+// 2) Figure out command
+$cmd = $argv[1] ?? 'serve';
 
-// Parse options
-for ($i = 2; $i < count($argv); $i++) {
-    $arg = $argv[$i];
-
-    if (strpos($arg, '--') === 0) {
-        $arg = substr($arg, 2);
-        if (strpos($arg, '=') !== false) {
-            [$key, $value] = explode('=', $arg, 2);
-            $options[$key] = $value;
-        } else {
-            $options[$arg] = true;
-        }
-    }
-}
-
-// Extract common options
-$host = $options['host'] ?? '127.0.0.1';
-$port = isset($options['port']) ? (int)$options['port'] : 8000;
-$watch = isset($options['watch']) || isset($options['w']);
-$docRoot = $options['docroot'] ?? $options['doc-root'] ?? null;
-
-// Execute command
-switch ($command) {
-    case 'serve':
-    case 'start':
-        $server = new DevServer();
-        $server->serve($host, $port, $docRoot, $watch);
-        break;
-
+// Handle different commands
+switch ($cmd) {
     case 'stop':
         DevServer::stop();
-        break;
+        exit(0);
 
     case 'restart':
+        $host = $argv[2] ?? ($_SERVER['ML_DEV_HOST'] ?? '127.0.0.1');
+        $port = isset($argv[3]) ? (int)$argv[3] : (int)($_SERVER['ML_DEV_PORT'] ?? 8000);
         DevServer::restart($host, $port);
-        break;
+        exit(0);
 
     case 'status':
         DevServer::status();
-        break;
+        exit(0);
 
-    case 'help':
-    case '--help':
-    case '-h':
-        showHelp();
+    case 'serve':
+    case 'start':
+        // Continue to serve logic below
         break;
 
     default:
-        fwrite(STDERR, "Unknown command: {$command}\n\n");
-        showHelp();
+        echo "Usage: dev-server [command] [host] [port]\n";
+        echo "\n";
+        echo "Commands:\n";
+        echo "  serve, start  Start the dev server (default)\n";
+        echo "  stop          Stop the dev server\n";
+        echo "  restart       Restart the dev server\n";
+        echo "  status        Check if dev server is running\n";
+        echo "\n";
+        echo "Examples:\n";
+        echo "  dev-server                    # Start on 127.0.0.1:8000\n";
+        echo "  dev-server 0.0.0.0 3000       # Start on 0.0.0.0:3000\n";
+        echo "  dev-server stop               # Stop the server\n";
+        echo "  dev-server restart            # Restart the server\n";
+        echo "  dev-server status             # Check status\n";
         exit(1);
 }
 
-function showHelp(): void
-{
-    echo <<<'HELP'
-MonkeysLegion Dev Server - Hot-reload development server
-
-USAGE:
-    ./dev-server <command> [options]
-
-COMMANDS:
-    serve           Start the development server (default)
-    stop            Stop the running server
-    restart         Restart the server
-    status          Show server status
-    help            Show this help message
-
-OPTIONS:
-    --host=HOST     Server host (default: 127.0.0.1)
-    --port=PORT     Server port (default: 8000)
-    --watch, -w     Enable hot-reload file watching
-    --docroot=PATH  Document root path (default: public)
-
-EXAMPLES:
-    # Start server with hot-reload
-    ./dev-server serve --watch
-
-    # Start on custom port
-    ./dev-server serve --port=3000
-
-    # Start with custom host and port
-    ./dev-server serve --host=0.0.0.0 --port=8080 --watch
-
-    # Check server status
-    ./dev-server status
-
-    # Stop the server
-    ./dev-server stop
-
-    # Restart the server
-    ./dev-server restart
-
-NOTES:
-    - Hot-reload requires the dev-reload.js script in your public/js/ directory
-    - Make sure APP_ENV=development is set in your .env file
-    - The server runs in the background; use 'stop' to terminate it
-
-HELP;
+// 3) Parse host/port for serve command
+if ($cmd === 'serve' || $cmd === 'start') {
+    $host = $argv[2] ?? ($_SERVER['ML_DEV_HOST'] ?? '127.0.0.1');
+    $port = isset($argv[3]) ? (int)$argv[3] : (int)($_SERVER['ML_DEV_PORT'] ?? 8000);
+} else {
+    $host = $argv[1] ?? ($_SERVER['ML_DEV_HOST'] ?? '127.0.0.1');
+    $port = isset($argv[2]) ? (int)$argv[2] : (int)($_SERVER['ML_DEV_PORT'] ?? 8000);
 }
 
+// Find router script
+$projectRoot = getcwd();
+$projectRouter = $projectRoot . '/bin/dev-router.php';
+if (is_file($projectRouter)) {
+    $router = $projectRouter;
+} else {
+    $vendorRouter = $projectRoot . '/vendor/monkeyscloud/monkeyslegion-dev-server/bin/dev-router.php';
+    if (!is_file($vendorRouter)) {
+        fwrite(STDERR, "Error: dev-router.php not found in bin/ or vendor package\n");
+        exit(1);
+    }
+    $router = $vendorRouter;
+}
+
+// 4) Check for file watching options in order of preference:
+//    1. entr (most efficient, external tool)
+//    2. Pure PHP FileWatcher (built-in, no external dependencies)
+
+$hasEntr = (bool) shell_exec('which entr 2>/dev/null');
+
+if ($hasEntr) {
+    // Option 1: Use entr for efficient file watching
+    echo "🔁  Hot-reload enabled via entr (recommended)\n";
+
+    // PHP command with opcache disabled for hot-reload
+    $phpCmd = sprintf(
+            "%s -d opcache.enable_cli=0 -d opcache.enable=0 -d opcache.validate_timestamps=1 -d opcache.revalidate_freq=0 -d realpath_cache_ttl=0 -S %s:%d -t public %s",
+            escapeshellarg(PHP_BINARY),
+            $host,
+            $port,
+            escapeshellarg($router)
+    );
+
+    // Watch PHP code, templates, public assets, config, etc.
+    // `-r` restarts the server command on any file change
+    echo "🌐  Server will auto-restart on file changes\n";
+    echo "🚀  Starting server at http://{$host}:{$port}\n";
+    echo "💡  Watching: app, public, resources, config\n";
+    passthru("find app public resources config -type f 2>/dev/null | entr -r {$phpCmd}");
+
+} else {
+    // Option 2: Use pure PHP FileWatcher as fallback
+    echo "💡  entr not found, using built-in FileWatcher\n";
+    echo "💡  For better performance, install entr: sudo apt-get install entr (Linux) or brew install entr (macOS)\n";
+
+    $server = new DevServer();
+    $server->serve($host, $port, null, true); // true = enable FileWatcher
+}
