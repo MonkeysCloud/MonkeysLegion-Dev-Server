@@ -331,6 +331,32 @@ final class DevServer
     }
 
     /**
+     * Public helper for CLI / entr mode to bump the reload marker.
+     */
+    public static function bumpReloadMarker(): void
+    {
+        $projectRoot = getcwd();
+        $marker = $projectRoot . '/var/cache/dev-reload.json';
+
+        // Ensure directory exists
+        @mkdir(dirname($marker), 0775, true);
+
+        $payload = [
+            'version'   => microtime(true),
+            'timestamp' => date('Y-m-d H:i:s'),
+        ];
+
+        // Atomic write: write to temp file, then rename
+        $temp = $marker . '.tmp';
+        if (@file_put_contents($temp, json_encode($payload)) !== false) {
+            @rename($temp, $marker);
+            echo "Reload marker updated (v{$payload['version']})\n";
+        } else {
+            echo "Failed to write reload marker\n";
+        }
+    }
+
+    /**
      * Touch the reload marker file to signal reload.
      */
     private function touchReloadMarker(): void

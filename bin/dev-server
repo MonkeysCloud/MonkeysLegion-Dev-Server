@@ -16,6 +16,51 @@ require $dir . '/vendor/autoload.php';
 
 use MonkeysLegion\DevServer\DevServer;
 
+/**
+ * Minimal .env reader for a single key (no dependency on dotenv libs).
+ */
+function ml_read_env_value(string $projectRoot, string $key): ?string
+{
+    $envFile = $projectRoot . '/.env';
+    if (!is_file($envFile)) {
+        return null;
+    }
+
+    $lines = @file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    if ($lines === false) {
+        return null;
+    }
+
+    foreach ($lines as $line) {
+        $line = ltrim($line);
+        if ($line === '' || $line[0] === '#' || !str_contains($line, '=')) {
+            continue;
+        }
+
+        [$k, $v] = explode('=', $line, 2);
+        $k = trim($k);
+        if ($k !== $key) {
+            continue;
+        }
+
+        $v = trim($v);
+        if ($v === '') {
+            return '';
+        }
+
+        // Strip wrapping quotes
+        $first = $v[0] ?? null;
+        $last  = $v[strlen($v) - 1] ?? null;
+        if (($first === '"' && $last === '"') || ($first === "'" && $last === "'")) {
+            $v = substr($v, 1, -1);
+        }
+
+        return $v;
+    }
+
+    return null;
+}
+
 // 2) Figure out command
 $cmd = $argv[1] ?? 'serve';
 
@@ -35,6 +80,10 @@ switch ($cmd) {
         DevServer::status();
         exit(0);
 
+    case 'bump':
+        DevServer::bumpReloadMarker();
+        exit(0);
+
     case 'serve':
     case 'start':
         // Continue to serve logic below
@@ -48,13 +97,19 @@ switch ($cmd) {
         echo "  stop          Stop the dev server\n";
         echo "  restart       Restart the dev server\n";
         echo "  status        Check if dev server is running\n";
+        echo "  bump          Update reload marker (for entr integration)\n";
+        echo "\n";
+        echo "Environment Variables:\n";
+        echo "  ML_DEV_WATCHER=auto         Auto-select best watcher (entr if installed, else FileWatcher)\n";
+        echo "  ML_DEV_WATCHER=entr         Force entr mode (falls back to FileWatcher if not installed)\n";
+        echo "  ML_DEV_WATCHER=filewatcher  Force FileWatcher mode (pure PHP, no dependencies)\n";
         echo "\n";
         echo "Examples:\n";
-        echo "  dev-server                    # Start on 127.0.0.1:8000\n";
-        echo "  dev-server 0.0.0.0 3000       # Start on 0.0.0.0:3000\n";
-        echo "  dev-server stop               # Stop the server\n";
-        echo "  dev-server restart            # Restart the server\n";
-        echo "  dev-server status             # Check status\n";
+        echo "  dev-server                           # Start on 127.0.0.1:8000\n";
+        echo "  dev-server 0.0.0.0 3000              # Start on 0.0.0.0:3000\n";
+        echo "  dev-server stop                      # Stop the server\n";
+        echo "  ML_DEV_WATCHER=auto dev-server       # Auto-select watcher\n";
+        echo "  ML_DEV_WATCHER=entr dev-server       # Force entr mode\n";
         exit(1);
 }
 
@@ -67,8 +122,10 @@ if ($cmd === 'serve' || $cmd === 'start') {
     $port = isset($argv[2]) ? (int)$argv[2] : (int)($_SERVER['ML_DEV_PORT'] ?? 8000);
 }
 
-// Find router script
+// Project root (for router + .env lookup)
 $projectRoot = getcwd();
+
+// Find router script
 $projectRouter = $projectRoot . '/bin/dev-router.php';
 if (is_file($projectRouter)) {
     $router = $projectRouter;
@@ -81,37 +138,115 @@ if (is_file($projectRouter)) {
     $router = $vendorRouter;
 }
 
-// 4) Check for file watching options in order of preference:
-//    1. entr (most efficient, external tool)
-//    2. Pure PHP FileWatcher (built-in, no external dependencies)
+// ----------------------------------------------------------
+// 4) Decide watcher mode (FileWatcher vs entr)
+// ----------------------------------------------------------
+$hasEntr = (bool) trim((string) shell_exec('which entr 2>/dev/null'));
 
-$hasEntr = (bool) shell_exec('which entr 2>/dev/null');
+// Default mode: filewatcher
+$mode = 'filewatcher';
 
-if ($hasEntr) {
-    // Option 1: Use entr for efficient file watching
-    echo "🔁  Hot-reload enabled via entr (recommended)\n";
+// Legacy override: ML_DEV_FORCE_FILEWATCHER
+$legacyForce = getenv('ML_DEV_FORCE_FILEWATCHER');
+if ($legacyForce !== false && $legacyForce !== '') {
+    $v = strtolower(trim((string) $legacyForce));
+    if (in_array($v, ['0', 'false', 'off', 'no'], true)) {
+        // Explicitly turn OFF FileWatcher → use entr if available
+        $mode = 'entr';
+    } else {
+        $mode = 'filewatcher';
+    }
+} else {
+    // Optional: ML_DEV_WATCHER=auto|filewatcher|entr in env or .env
+    $watcherMode = getenv('ML_DEV_WATCHER');
+    if ($watcherMode === false || $watcherMode === '') {
+        $watcherMode = $_ENV['ML_DEV_WATCHER'] ?? $_SERVER['ML_DEV_WATCHER'] ?? null;
+    }
+    if ($watcherMode === null || $watcherMode === '') {
+        $watcherMode = ml_read_env_value($projectRoot, 'ML_DEV_WATCHER') ?? 'auto';
+    }
+    $watcherMode = strtolower(trim((string) $watcherMode));
 
-    // PHP command with opcache disabled for hot-reload
+    if ($watcherMode === 'auto') {
+        // Auto mode: use entr if available, otherwise filewatcher
+        $mode = $hasEntr ? 'entr' : 'filewatcher';
+    } elseif ($watcherMode === 'entr') {
+        $mode = 'entr';
+    } else {
+        $mode = 'filewatcher';
+    }
+}
+
+// If entr requested but not installed, fall back
+if ($mode === 'entr' && !$hasEntr) {
+    if ($watcherMode === 'auto') {
+        echo "ℹ️  Auto mode: entr not installed, using FileWatcher\n";
+    } else {
+        echo "⚠️  ML_DEV_WATCHER=entr requested, but 'entr' is not installed. Falling back to FileWatcher.\n";
+    }
+    $mode = 'filewatcher';
+}
+
+if ($mode === 'entr') {
+    // --------------------------------------------------
+    // entr mode: server hot-restart with browser auto-reload
+    // --------------------------------------------------
+    if ($watcherMode === 'auto') {
+        echo "🔁  Auto mode: Using entr (installed and available)\n";
+    } else {
+        echo "🔁  Hot-reload (server) via entr\n";
+    }
+
+    // Try to free the port first (in case a previous PHP dev server is still running)
+    $killCmd  = "lsof -ti:{$port} 2>/dev/null | xargs kill -9 2>/dev/null";
+    @exec($killCmd);
+    $killCmd2 = "pkill -f 'php.*-S.*:{$port}' 2>/dev/null";
+    @exec($killCmd2);
+
     $phpCmd = sprintf(
-            "%s -d opcache.enable_cli=0 -d opcache.enable=0 -d opcache.validate_timestamps=1 -d opcache.revalidate_freq=0 -d realpath_cache_ttl=0 -S %s:%d -t public %s",
+            '%s -d opcache.enable_cli=0 -d opcache.enable=0 -d opcache.validate_timestamps=1 -d opcache.revalidate_freq=0 -d realpath_cache_ttl=0 -S %s:%d -t public %s > /dev/null 2>&1',
             escapeshellarg(PHP_BINARY),
             $host,
             $port,
             escapeshellarg($router)
     );
 
-    // Watch PHP code, templates, public assets, config, etc.
-    // `-r` restarts the server command on any file change
-    echo "🌐  Server will auto-restart on file changes\n";
+    echo "🌐  Server will auto-restart on file changes (entr)\n";
     echo "🚀  Starting server at http://{$host}:{$port}\n";
     echo "💡  Watching: app, public, resources, config\n";
-    passthru("find app public resources config -type f 2>/dev/null | entr -r {$phpCmd}");
+    echo "💡  Browser auto-reload enabled via reload marker\n";
 
+    // Get the path to this dev-server script
+    $devServerBin = realpath(__FILE__) ?: __FILE__;
+
+    // Create wrapper command that bumps marker + starts server
+    $wrapperCmd = sprintf(
+            '%s %s bump 2>/dev/null; %s',
+            escapeshellarg(PHP_BINARY),
+            escapeshellarg($devServerBin),
+            $phpCmd
+    );
+
+    // One dev-server process, many php -S restarts managed by entr
+    passthru("find app public resources config -type f 2>/dev/null | entr -r sh -c " . escapeshellarg($wrapperCmd));
 } else {
-    // Option 2: Use pure PHP FileWatcher as fallback
-    echo "💡  entr not found, using built-in FileWatcher\n";
-    echo "💡  For better performance, install entr: sudo apt-get install entr (Linux) or brew install entr (macOS)\n";
+    // --------------------------------------------------
+    // Built-in FileWatcher mode (browser auto-reload)
+    // --------------------------------------------------
+    if ($watcherMode === 'auto') {
+        echo "🔁  Auto mode: Using FileWatcher (entr not installed)\n";
+    } else {
+        if ($hasEntr) {
+            echo "💡  entr is installed, but using built-in FileWatcher (browser hot-reload compatible).\n";
+            echo "💡  To try entr mode, set ML_DEV_WATCHER=entr. For auto-selection, set ML_DEV_WATCHER=auto.\n";
+        } else {
+            echo "💡  Using built-in FileWatcher\n";
+            echo "💡  You can install entr for alternative watching: brew install entr (macOS) or sudo apt-get install entr (Linux)\n";
+            echo "💡  Or set ML_DEV_WATCHER=auto to automatically use the best available watcher.\n";
+        }
+    }
 
     $server = new DevServer();
-    $server->serve($host, $port, null, true); // true = enable FileWatcher
+    // null docRoot → DevServer resolves public/ and uses your router internally
+    $server->serve($host, $port, null, true);
 }
